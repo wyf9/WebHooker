@@ -36,6 +36,19 @@ export const routeTargetSchema = v.object({
   topicId: v.optional(v.string()),
 });
 
+export const targetSchema = v.object({
+  id: v.string(),
+  groupId: v.string(),
+  name: v.string(),
+  platform: v.picklist(["discord", "telegram", "feishu"]),
+  channelId: v.optional(v.string()),
+  threadId: v.optional(v.string()),
+  chatId: v.optional(v.string()),
+  topicId: v.optional(v.string()),
+  createdAt: v.optional(v.number()),
+  updatedAt: v.optional(v.number()),
+});
+
 export const filterNodeSchema: v.GenericSchema<FilterNode> = v.lazy(() =>
   v.union([
     filterSchema,
@@ -50,7 +63,8 @@ export const routeSchema = v.object({
   name: v.string(),
   enabled: v.boolean(),
   filters: v.array(filterSchema),
-  targets: v.array(routeTargetSchema),
+  targets: v.optional(v.array(routeTargetSchema), []),
+  targetIds: v.optional(v.array(v.string())),
   groupId: v.optional(v.string()),
   fallback: v.optional(v.boolean()),
   stop: v.optional(v.boolean()),

@@ -51,12 +51,26 @@ export interface RouteTarget {
   topicId?: string;
 }
 
+export interface Target {
+  id: string;
+  groupId: string;
+  name: string;
+  platform: "discord" | "telegram" | "feishu";
+  channelId?: string;
+  threadId?: string;
+  chatId?: string;
+  topicId?: string;
+  createdAt?: number;
+  updatedAt?: number;
+}
+
 export interface Route {
   id: string;
   name: string;
   enabled: boolean;
   filters: Filter[];
   targets: RouteTarget[];
+  targetIds?: string[];
   groupId?: string;
   fallback?: boolean;
   stop?: boolean;

@@ -10,6 +10,7 @@ import {
 import type { Route, Group, GroupMember, GroupRole, ForgeSource, FilterNode } from "../types";
 import { loadRoutes, saveRoutes } from "../config";
 import { loadFragments, saveFragments, type NamedFragment } from "../fragments";
+import { loadTargets, saveTargets, type Target } from "../targets";
 import { evaluateFilterNode, explainFilterNode } from "../events/filter-ast";
 import { getAdminSession, destroyAdminSession, clearAdminCookie } from "./session";
 import { saveGroups, loadGroups, identityMatches, normalizeGroupMembers } from "./groups";
@@ -202,13 +203,26 @@ function validateRoutes(
     }
     const rawTarget = r.target as Record<string, unknown> | undefined;
     const rawTargets = r.targets as unknown;
+    const rawTargetIds = r.targetIds as unknown;
+
+    if (rawTargetIds !== undefined) {
+      if (!Array.isArray(rawTargetIds)) {
+        return { ok: false, error: `route "${r.id}".targetIds must be an array of strings` };
+      }
+      for (const tid of rawTargetIds) {
+        if (typeof tid !== "string" || tid.trim().length === 0) {
+          return { ok: false, error: `route "${r.id}".targetIds contains invalid id` };
+        }
+      }
+    }
+
     if (rawTargets === undefined && rawTarget && typeof rawTarget === "object") {
       const legacy = validateTarget(`route "${r.id}"`, rawTarget);
       if (!legacy.ok) return legacy;
       (r as Record<string, unknown>).targets = [legacy.target];
       delete (r as Record<string, unknown>).target;
     } else if (Array.isArray(rawTargets)) {
-      if (rawTargets.length === 0) {
+      if (rawTargets.length === 0 && (!Array.isArray(rawTargetIds) || rawTargetIds.length === 0)) {
         return { ok: false, error: `route "${r.id}" needs at least one target` };
       }
       const normalized: Route["targets"] = [];
@@ -222,8 +236,10 @@ function validateRoutes(
         normalized.push(result.target);
       }
       (r as Record<string, unknown>).targets = normalized;
+    } else if (Array.isArray(rawTargetIds) && rawTargetIds.length > 0) {
+      (r as Record<string, unknown>).targets = (r as Record<string, unknown>).targets || [];
     } else {
-      return { ok: false, error: `route "${r.id}" needs a targets array` };
+      return { ok: false, error: `route "${r.id}" needs targets or targetIds` };
     }
   }
   return { ok: true, routes: routes as Route[] };
@@ -982,6 +998,14 @@ export async function adminGroupRename(
       fragments.map((f) => (f.groupId === groupId ? { ...f, groupId: newId } : f)),
     );
   }
+  const targets = await loadTargets(env.DB);
+  const touchedTargets = targets.filter((t) => t.groupId === groupId);
+  if (touchedTargets.length > 0) {
+    await saveTargets(
+      env.DB,
+      targets.map((t) => (t.groupId === groupId ? { ...t, groupId: newId } : t)),
+    );
+  }
   const secret = await getTenantSecret(env.KV, groupId);
   if (secret) {
     await env.KV.put(`tenant:${newId}`, secret);
@@ -1230,4 +1254,119 @@ export async function adminApiTestMatch(event: H3Event): Promise<Record<string, 
     return respondError(event, 400, `Failed to evaluate: ${String(e)}`);
   }
   return { matched, explanation: explainFilterNode(rawNode as FilterNode) };
+}
+
+function validateTargets(
+  targets: unknown,
+  groupId: string,
+): { ok: true; targets: Target[] } | { ok: false; error: string } {
+  if (!Array.isArray(targets)) return { ok: false, error: "targets must be an array" };
+  if (targets.length > 200) return { ok: false, error: "too many targets" };
+  const out: Target[] = [];
+  const seenIds = new Set<string>();
+
+  for (let i = 0; i < targets.length; i++) {
+    const t = targets[i] as Record<string, unknown>;
+    if (!t || typeof t !== "object") return { ok: false, error: `target[${i}] must be an object` };
+    if (typeof t.id !== "string" || !/^[a-z0-9][a-z0-9-]*$/.test(t.id)) {
+      return { ok: false, error: `target[${i}].id is invalid` };
+    }
+    if (seenIds.has(t.id)) return { ok: false, error: `duplicate target id "${t.id}"` };
+    seenIds.add(t.id);
+
+    if (typeof t.name !== "string" || t.name.trim().length === 0) {
+      return { ok: false, error: `target "${t.id}".name is required` };
+    }
+    const platform = t.platform === undefined ? "discord" : t.platform;
+    if (platform !== "discord" && platform !== "telegram" && platform !== "feishu") {
+      return { ok: false, error: `target "${t.id}".platform must be "discord", "telegram" or "feishu"` };
+    }
+
+    if (platform === "telegram" || platform === "feishu") {
+      if (typeof t.chatId !== "string" || t.chatId.trim().length === 0) {
+        return { ok: false, error: `target "${t.id}".chatId is required` };
+      }
+      if (t.topicId !== undefined && typeof t.topicId !== "string") {
+        return { ok: false, error: `target "${t.id}".topicId must be a string` };
+      }
+    } else {
+      if (typeof t.channelId !== "string" || t.channelId.trim().length === 0) {
+        return { ok: false, error: `target "${t.id}".channelId is required` };
+      }
+      if (t.threadId !== undefined && typeof t.threadId !== "string") {
+        return { ok: false, error: `target "${t.id}".threadId must be a string` };
+      }
+    }
+
+    out.push({
+      id: t.id,
+      groupId,
+      name: t.name.trim(),
+      platform,
+      channelId: platform === "discord" ? (t.channelId as string).trim() : undefined,
+      threadId: platform === "discord" && typeof t.threadId === "string" ? t.threadId.trim() || undefined : undefined,
+      chatId: platform !== "discord" ? (t.chatId as string).trim() : undefined,
+      topicId: platform === "telegram" && typeof t.topicId === "string" ? t.topicId.trim() || undefined : undefined,
+      createdAt: typeof t.createdAt === "number" ? t.createdAt : undefined,
+      updatedAt: typeof t.updatedAt === "number" ? t.updatedAt : undefined,
+    });
+  }
+
+  return { ok: true, targets: out };
+}
+
+/** GET /admin/api/groups/:groupId/targets */
+export async function adminGroupTargetsGet(
+  event: H3Event,
+  groupId: string,
+): Promise<Record<string, unknown>> {
+  await requireAnyAccess(event);
+  const env = cfEnv(event);
+  const access = requireGroup(event, groupId);
+  if (!access.ok) return accessError(event, access);
+  const all = await loadTargets(env.DB);
+  return { group: access.group, targets: all.filter((t) => t.groupId === groupId) };
+}
+
+/** PUT /admin/api/groups/:groupId/targets */
+export async function adminGroupTargetsPut(
+  event: H3Event,
+  groupId: string,
+): Promise<Record<string, unknown>> {
+  await requireAnyAccess(event);
+  const env = cfEnv(event);
+  const access = requireGroupRole(event, groupId, "admin");
+  if (!access.ok) return accessError(event, access);
+
+  const body = await readJsonBody(event);
+  if (!body) return respondError(event, 400, "Invalid JSON body");
+
+  const submitted = body["targets"];
+  const result = validateTargets(submitted, groupId);
+  if (!result.ok) return respondError(event, 400, result.error);
+
+  const existing = await loadTargets(env.DB);
+  const others = existing.filter((t) => t.groupId !== groupId);
+  const nextAll = [...others, ...result.targets];
+
+  try {
+    await saveTargets(env.DB, nextAll, groupId);
+  } catch (err) {
+    log.error({ err }, "Failed to save targets");
+    return respondError(event, 500, "Failed to save targets");
+  }
+
+  const auth = currentAuth(event);
+  await recordAudit(env.DB, {
+    ts: Date.now(),
+    actorId: auth.session.userId,
+    actorLogin: auth.session.login,
+    action: "group.targets.update",
+    targetType: "group",
+    targetId: groupId,
+    groupId,
+    detail: { count: result.targets.length },
+    ip: clientIp(event),
+  });
+  return { ok: true, count: result.targets.length };
 }

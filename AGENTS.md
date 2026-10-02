@@ -50,9 +50,10 @@ server/                  # Nitro server
 ├── plugins/             # Nitro plugins: queue-consumer (hooks cloudflare:queue → handleQueueBatch)
 ├── error-handler.ts     # JSON error handler
 └── lib/
-    ├── types.ts         # Env, Config, Route, Filter, Group, WebhookEvent, NeutralMessage
+    ├── types.ts         # Env, Config, Route, Filter, Group, WebhookEvent, NeutralMessage, Target
     ├── config.ts        # loadRoutes/saveRoutes (delegates to D1 ConfigStore when available, else KV config:routes), loadConfig from env
     ├── fragments.ts     # named filter fragments (loadFragments/saveFragments — D1 d1_fragments, no KV)
+    ├── targets.ts       # group push targets (loadTargets/saveTargets — D1 d1_targets)
     ├── config/          # config schema + migration + validation
     │   └── schema.ts    # CONFIG_SCHEMA_VERSION, valibot route/group/filter schemas, migrateRoutes/Groups, validateRoutes/Groups (non-destructive), explainRoute
     ├── cf.ts            # cfEnv(event) — env bindings from event.context.cloudflare

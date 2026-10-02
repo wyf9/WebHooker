@@ -22,6 +22,8 @@ import {
   adminApiTestMatch,
   adminGroupFragmentsGet,
   adminGroupFragmentsPut,
+  adminGroupTargetsGet,
+  adminGroupTargetsPut,
 } from "../../../lib/web/admin";
 
 export default defineEventHandler((event) => {
@@ -78,6 +80,10 @@ export default defineEventHandler((event) => {
   if (seg[0] === "groups" && seg[2] === "fragments" && seg.length === 3) {
     if (method === "GET") return adminGroupFragmentsGet(event, seg[1]!);
     if (method === "PUT") return adminGroupFragmentsPut(event, seg[1]!);
+  }
+  if (seg[0] === "groups" && seg[2] === "targets" && seg.length === 3) {
+    if (method === "GET") return adminGroupTargetsGet(event, seg[1]!);
+    if (method === "PUT") return adminGroupTargetsPut(event, seg[1]!);
   }
 
   setResponseStatus(event, 404);

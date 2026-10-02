@@ -1,5 +1,7 @@
 import type { Group, Route } from "../types";
 import { log } from "../lib/log";
+import { loadTargets } from "../targets";
+import { hydrateRouteTargets, migrateTargets } from "./migrate-targets";
 
 export interface ConfigStore {
   loadRoutes(): Promise<Route[]>;
@@ -23,6 +25,7 @@ interface D1RouteRow {
   enabled: number;
   filters: string;
   targets: string;
+  target_ids?: string | null;
   stop: number;
   fallback: number;
   discord_role_ids: string | null;
@@ -40,11 +43,22 @@ export function d1ConfigStore(db: D1Database, kv: KVNamespace): ConfigStore {
   let groupsCache: { groups: Group[]; expiresAt: number } | null = null;
 
   async function loadRoutesFromD1(): Promise<Route[]> {
-    const stmt = db.prepare(
-      "SELECT id, group_id, name, enabled, filters, targets, stop, fallback, discord_role_ids, ast FROM d1_routes ORDER BY id",
+    let stmt = db.prepare(
+      "SELECT id, group_id, name, enabled, filters, targets, target_ids, stop, fallback, discord_role_ids, ast FROM d1_routes ORDER BY id",
     );
     if (typeof stmt.all !== "function") return [];
-    const { results } = await stmt.all<D1RouteRow>();
+    let results: D1RouteRow[] | undefined;
+    try {
+      const res = await stmt.all<D1RouteRow>();
+      results = res.results;
+    } catch {
+      // Fallback if target_ids column is not yet migrated in old schema
+      const fallbackStmt = db.prepare(
+        "SELECT id, group_id, name, enabled, filters, targets, stop, fallback, discord_role_ids, ast FROM d1_routes ORDER BY id",
+      );
+      const res = await fallbackStmt.all<D1RouteRow>();
+      results = res.results;
+    }
     if (!results || results.length === 0) return [];
     return results.map((r) => ({
       id: r.id,
@@ -53,6 +67,7 @@ export function d1ConfigStore(db: D1Database, kv: KVNamespace): ConfigStore {
       enabled: r.enabled === 1,
       filters: JSON.parse(r.filters),
       targets: JSON.parse(r.targets),
+      targetIds: r.target_ids ? JSON.parse(r.target_ids) : undefined,
       stop: r.stop === 1,
       fallback: r.fallback === 1,
       discordRoleIds: r.discord_role_ids ? JSON.parse(r.discord_role_ids) : undefined,
@@ -116,13 +131,14 @@ export function d1ConfigStore(db: D1Database, kv: KVNamespace): ConfigStore {
       statements.push(
         db
           .prepare(
-            `INSERT INTO d1_routes (id, group_id, name, enabled, filters, targets, stop, fallback, discord_role_ids, ast, version, created_at, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+            `INSERT INTO d1_routes (id, group_id, name, enabled, filters, targets, target_ids, stop, fallback, discord_role_ids, ast, version, created_at, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
              ON CONFLICT(id, group_id) DO UPDATE SET
                name = excluded.name,
                enabled = excluded.enabled,
                filters = excluded.filters,
                targets = excluded.targets,
+               target_ids = excluded.target_ids,
                stop = excluded.stop,
                fallback = excluded.fallback,
                discord_role_ids = excluded.discord_role_ids,
@@ -135,7 +151,8 @@ export function d1ConfigStore(db: D1Database, kv: KVNamespace): ConfigStore {
             r.name,
             r.enabled ? 1 : 0,
             JSON.stringify(r.filters),
-            JSON.stringify(r.targets),
+            JSON.stringify(r.targets ?? []),
+            r.targetIds ? JSON.stringify(r.targetIds) : null,
             r.stop ? 1 : 0,
             r.fallback ? 1 : 0,
             r.discordRoleIds ? JSON.stringify(r.discordRoleIds) : null,
@@ -222,6 +239,29 @@ export function d1ConfigStore(db: D1Database, kv: KVNamespace): ConfigStore {
       try {
         routes = await loadRoutesFromD1();
         if (routes.length > 0) {
+          // Check if migration to targets is needed
+          const unmigrated = routes.some((r) => (!r.targetIds || r.targetIds.length === 0) && r.targets && r.targets.length > 0);
+          if (unmigrated) {
+            const migration = await migrateTargets(db, routes);
+            if (migration.routesUpdated > 0) {
+              routes = migration.routes;
+              // Persist migrated routes asynchronously
+              db.batch(routeStatements(routes)).catch((err) =>
+                log.warn({ err }, "Failed to persist migrated routes"),
+              );
+            }
+          }
+
+          // Hydrate targets from group targets
+          try {
+            const allTargets = await loadTargets(db);
+            if (allTargets.length > 0) {
+              routes = hydrateRouteTargets(routes, allTargets);
+            }
+          } catch (err) {
+            log.warn({ err }, "Failed to hydrate route targets from D1");
+          }
+
           syncRoutesToKV(routes, KV_CACHE_TTL).catch(() => undefined);
         } else {
           routes = await loadRoutesFromKV();

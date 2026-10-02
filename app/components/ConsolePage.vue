@@ -175,6 +175,11 @@
               </button>
             </section>
 
+            <TargetManager
+              :group-id="selectedGroup.id"
+              :can-edit="canEditRoutes(selectedGroup.id)"
+            />
+
             <MembersPanel
               :group="selectedGroup"
               :can-edit="canEditGroup(selectedGroup.id)"
@@ -330,6 +335,7 @@
 <script setup lang="ts">
 import type { Group, Route } from "~/types";
 import { useAuditApi } from "~/composables/useAudit";
+import TargetManager from "~/components/TargetManager.vue";
 import WebhookPanel from "~/components/WebhookPanel.vue";
 import AdminHome from "~/components/AdminHome.vue";
 

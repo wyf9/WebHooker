@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
-import type { Filter, FilterNode, NamedFragment, Route, RouteTarget, RouteTemplate } from "~/types";
+import type { Filter, FilterNode, NamedFragment, Route, RouteTarget, RouteTemplate, Target } from "~/types";
 import { FRAGMENT_PRESETS, ROUTE_TEMPLATES } from "~/types";
+import { useTargetsApi } from "~/composables/useTargets";
 import type { NodeForm } from "~/composables/useFilterNode";
 import {
   blankLeafForm,
@@ -48,8 +49,11 @@ const form = reactive({
   fallback: false,
   stop: false,
   discordRolesText: "",
+  targetIds: [] as string[],
   targets: [] as TargetForm[],
 });
+
+const { targets: groupTargets, load: loadTargets } = useTargetsApi();
 
 const root = ref<NodeForm>(blankNode("all"));
 
@@ -155,6 +159,7 @@ function collect(): Route | null {
     filters,
     ...(ast ? { ast } : {}),
     targets,
+    targetIds: form.targetIds.length ? form.targetIds : undefined,
   };
 }
 
@@ -169,7 +174,7 @@ function save(): void {
     formError.value = t("routeEditor.errName");
     return;
   }
-  if (!route.targets.length) {
+  if (!route.targets.length && (!route.targetIds || !route.targetIds.length)) {
     targetError.value = t("routeEditor.errTargets");
     return;
   }
@@ -282,6 +287,7 @@ watch(
     form.fallback = r?.fallback ?? false;
     form.stop = r?.stop ?? false;
     form.discordRolesText = r?.discordRoleIds?.length ? r.discordRoleIds.join(", ") : "";
+    form.targetIds = r?.targetIds ? [...r.targetIds] : [];
     form.targets =
       r && r.targets.length
         ? r.targets.map((tg) => {
@@ -309,7 +315,10 @@ watch(
     testError.value = "";
     fragmentName.value = "";
     fragmentError.value = "";
-    if (props.groupId) loadFragments(props.groupId);
+    if (props.groupId) {
+      loadFragments(props.groupId);
+      loadTargets(props.groupId);
+    }
   },
 );
 </script>
@@ -484,6 +493,36 @@ watch(
 
           <section class="editor-section">
             <h3 class="editor-section-title">{{ t("routeEditor.sectionTargets") }}</h3>
+
+            <!-- Group Targets Selection -->
+            <div v-if="groupTargets.length" class="mb-4">
+              <label class="block text-xs font-semibold text-text-muted mb-1.5">
+                {{ t("routeEditor.groupTargets") }}
+              </label>
+              <div class="flex flex-col gap-1.5">
+                <label
+                  v-for="gt in groupTargets"
+                  :key="gt.id"
+                  class="flex items-center gap-2 text-xs p-1.5 rounded border border-border bg-bg-surface hover:bg-bg cursor-pointer select-none"
+                >
+                  <input
+                    v-model="form.targetIds"
+                    type="checkbox"
+                    :value="gt.id"
+                    class="rounded text-accent focus:ring-accent"
+                  />
+                  <span class="font-medium text-text-strong">{{ gt.name }}</span>
+                  <span class="text-text-muted font-mono text-[10px]">
+                    ({{ gt.platform }}: {{ gt.channelId || gt.chatId }})
+                  </span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Custom / Inline Targets -->
+            <div class="text-xs font-semibold text-text-muted mb-1.5">
+              {{ groupTargets.length ? t("routeEditor.customTargets") : t("routeEditor.targets") }}
+            </div>
             <div v-for="(tg, i) in form.targets" :key="i" class="target-row">
               <select v-model="tg.platform" class="tg-select">
                 <option value="discord">Discord</option>
