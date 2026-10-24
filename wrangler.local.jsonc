@@ -1,0 +1,78 @@
+{
+	"name": "webhooker",
+	"account_id": "a55f78dc73452cce2da2a69798c86db3",
+	"main": ".output/server/index.mjs",
+	"compatibility_date": "2026-08-04",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"build": {
+		"command": "bun run build"
+	},
+	"assets": {
+		"directory": "./.output/public",
+		"binding": "ASSETS",
+		"run_worker_first": true
+	},
+	"triggers": {
+		"crons": [
+			"*/5 * * * *"
+		]
+	},
+	"kv_namespaces": [
+		{
+			"binding": "KV",
+			"id": "8dfdd13ef5614d7fb874308d80a9052a"
+		},
+	],
+	// Optional: R2 for oversized payloads. Uncomment after enabling R2 and running
+	// `bunx wrangler r2 bucket create webhooker-payloads`. Without this binding the
+	// worker falls back to KV `queue:payload:*`.
+	// "r2_buckets": [
+	// 	{
+	// 		"binding": "PAYLOAD",
+	// 		"bucket_name": "webhooker-payloads",
+	// 	}
+	// ],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "webhooker",
+			"database_id": "e83d9c29-bfe7-4702-8b8c-82516c8d7335"
+		},
+	],
+	"workers_dev": false,
+	"preview_urls": false,
+	"queues": {
+		"producers": [
+			{
+				"queue": "webhooker-delivery",
+				"binding": "QUEUE",
+			},
+		],
+		"consumers": [
+			{
+				"queue": "webhooker-delivery",
+				"max_batch_size": 10,
+				"max_batch_timeout": 30,
+				"max_retries": 5,
+				"dead_letter_queue": "webhooker-delivery-dlq"
+			},
+			{
+				"queue": "webhooker-delivery-dlq",
+				"max_batch_size": 10,
+				"max_batch_timeout": 30,
+				"max_retries": 1
+			}
+		]
+	},
+	"routes": [
+		{
+			"pattern": "webhooker.siiway.top",
+			"zone_name": "siiway.top",
+			"custom_domain": true,
+			"enabled": true,
+			"previews_enabled": false
+		}
+	],
+}
